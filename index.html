@@ -1,16 +1,274 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-    <title>B-Tree Visualization</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B 树插入动态演示</title>
     <style>
-        /* Add Your Styles Here */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f9;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .control-panel {
+            background: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        input {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 100px;
+            outline: none;
+        }
+        input:focus { border-color: #007bff; }
+        button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #0056b3; }
+        button.danger { background-color: #dc3545; }
+        button.danger:hover { background-color: #c82333; }
+        #canvas-container {
+            width: 100%;
+            max-width: 1000px;
+            overflow-x: auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        canvas {
+            display: block;
+        }
     </style>
 </head>
 <body>
-    <h1>B-Tree Visualizer</h1>
-    <div id="b-tree-visualization"></div>
+
+    <div class="control-panel">
+        <label><b>M = 4阶 B树</b></label>
+        <input type="number" id="keyInput" placeholder="输入数字..." onkeypress="handleEnter(event)">
+        <button onclick="insertKey()">插入</button>
+        <button class="danger" onclick="resetTree()">重置</button>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="treeCanvas" width="1000" height="500"></canvas>
+    </div>
+
     <script>
-        // Add Your JavaScript Visualization Code Here
+        // B 树引擎逻辑 (Overflow 策略实现)
+        class BTree {
+            constructor(order) {
+                this.order = order; 
+                this.root = { keys: [], children: [], isLeaf: true };
+            }
+
+            insert(key) {
+                // 防止重复插入
+                if(this.contains(this.root, key)) {
+                    alert("键值 " + key + " 已存在！");
+                    return;
+                }
+                this._insert(this.root, key);
+                // 如果根节点溢出，分裂产生新根
+                if (this.root.keys.length >= this.order) {
+                    let newRoot = { keys: [], children: [this.root], isLeaf: false };
+                    this._split(newRoot, 0, this.root);
+                    this.root = newRoot;
+                }
+            }
+
+            contains(node, key) {
+                let i = 0;
+                while (i < node.keys.length && key > node.keys[i]) i++;
+                if (i < node.keys.length && key === node.keys[i]) return true;
+                if (node.isLeaf) return false;
+                return this.contains(node.children[i], key);
+            }
+
+            _insert(node, key) {
+                if (node.isLeaf) {
+                    node.keys.push(key);
+                    node.keys.sort((a, b) => a - b);
+                } else {
+                    let i = 0;
+                    while (i < node.keys.length && key > node.keys[i]) i++;
+                    this._insert(node.children[i], key);
+                    // 递归回溯时，如果子节点溢出则分裂
+                    if (node.children[i].keys.length >= this.order) {
+                        this._split(node, i, node.children[i]);
+                    }
+                }
+            }
+
+            _split(parent, index, child) {
+                let mid = Math.floor(child.keys.length / 2);
+                let midKey = child.keys[mid];
+                
+                let rightChild = {
+                    keys: child.keys.slice(mid + 1),
+                    children: child.isLeaf ? [] : child.children.slice(mid + 1),
+                    isLeaf: child.isLeaf
+                };
+                
+                child.keys = child.keys.slice(0, mid);
+                if (!child.isLeaf) {
+                    child.children = child.children.slice(0, mid + 1);
+                }
+                
+                parent.keys.splice(index, 0, midKey);
+                parent.children.splice(index + 1, 0, rightChild);
+            }
+        }
+
+        // Canvas 渲染引擎
+        const canvas = document.getElementById('treeCanvas');
+        const ctx = canvas.getContext('2d');
+        let btree = new BTree(4);
+
+        const NODE_HEIGHT = 30;
+        const KEY_WIDTH = 40;
+        const LEVEL_HEIGHT = 80;
+
+        function drawTree() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // 1. 先计算所有节点的位置和所需宽度
+            calculatePositions(btree.root, 1, 0);
+            
+            // 如果树太宽，自动扩展 Canvas
+            let requiredWidth = btree.root.width + 100;
+            if (requiredWidth > canvas.width) {
+                canvas.width = requiredWidth;
+                calculatePositions(btree.root, 1, 0); 
+            }
+            
+            // 将根节点居中
+            let offset = (canvas.width - btree.root.width) / 2 - btree.root.x + btree.root.width/2;
+            shiftPositions(btree.root, offset);
+
+            // 2. 渲染线条和节点
+            renderNode(btree.root);
+        }
+
+        function calculatePositions(node, depth, xOffset) {
+            let padding = 20;
+            if (node.isLeaf) {
+                node.width = node.keys.length * KEY_WIDTH;
+                node.x = xOffset + node.width / 2 + padding;
+                node.y = depth * LEVEL_HEIGHT;
+                return node.width + padding * 2;
+            } else {
+                let totalWidth = 0;
+                for (let child of node.children) {
+                    totalWidth += calculatePositions(child, depth + 1, xOffset + totalWidth);
+                }
+                node.width = node.keys.length * KEY_WIDTH;
+                // 父节点处于第一个和最后一个子节点的中间
+                let firstChild = node.children[0];
+                let lastChild = node.children[node.children.length - 1];
+                node.x = (firstChild.x + lastChild.x) / 2;
+                node.y = depth * LEVEL_HEIGHT;
+                return Math.max(totalWidth, node.width + padding * 2);
+            }
+        }
+
+        function shiftPositions(node, offset) {
+            node.x += offset;
+            for (let child of node.children) {
+                shiftPositions(child, offset);
+            }
+        }
+
+        function renderNode(node) {
+            // 画连接线
+            if (!node.isLeaf) {
+                ctx.strokeStyle = '#6c757d';
+                ctx.lineWidth = 2;
+                for (let child of node.children) {
+                    ctx.beginPath();
+                    ctx.moveTo(node.x, node.y + NODE_HEIGHT / 2);
+                    ctx.lineTo(child.x, child.y - NODE_HEIGHT / 2);
+                    ctx.stroke();
+                    renderNode(child);
+                }
+            }
+
+            // 画节点框
+            let startX = node.x - node.width / 2;
+            let startY = node.y - NODE_HEIGHT / 2;
+
+            // 节点背景
+            ctx.fillStyle = node.isLeaf ? '#e9ecef' : '#cce5ff';
+            ctx.fillRect(startX, startY, node.width, NODE_HEIGHT);
+            
+            // 节点边框
+            ctx.strokeStyle = '#004085';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(startX, startY, node.width, NODE_HEIGHT);
+
+            // 画里面的 Key 和分割线
+            ctx.fillStyle = '#212529';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            for (let i = 0; i < node.keys.length; i++) {
+                let keyX = startX + i * KEY_WIDTH + KEY_WIDTH / 2;
+                ctx.fillText(node.keys[i], keyX, node.y);
+
+                // 竖向分割线
+                if (i < node.keys.length - 1) {
+                    ctx.beginPath();
+                    ctx.moveTo(startX + (i + 1) * KEY_WIDTH, startY);
+                    ctx.lineTo(startX + (i + 1) * KEY_WIDTH, startY + NODE_HEIGHT);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // 交互逻辑
+        function insertKey() {
+            const input = document.getElementById('keyInput');
+            const val = parseInt(input.value);
+            if (!isNaN(val)) {
+                btree.insert(val);
+                drawTree();
+                input.value = '';
+            }
+            input.focus();
+        }
+
+        function handleEnter(e) {
+            if (e.key === 'Enter') insertKey();
+        }
+
+        function resetTree() {
+            btree = new BTree(4);
+            // 初始插入几个数据方便观看
+            [10, 20, 30, 40, 50, 60].forEach(k => btree.insert(k));
+            drawTree();
+        }
+
+        // 初始化
+        resetTree();
     </script>
 </body>
 </html>
