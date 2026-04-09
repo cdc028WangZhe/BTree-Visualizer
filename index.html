@@ -2,273 +2,234 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>B 树插入动态演示</title>
+    <title>B 树全功能交互演示</title>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background-color: #f4f7f9;
-            color: #333;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .control-panel {
-            background: white;
-            padding: 15px 25px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-            display: flex;
-            gap: 15px;
-            align-items: center;
-        }
-        input {
-            padding: 8px 12px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 14px;
-            width: 100px;
-            outline: none;
-        }
-        input:focus { border-color: #007bff; }
-        button {
-            padding: 8px 16px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: background 0.2s;
-        }
-        button:hover { background-color: #0056b3; }
-        button.danger { background-color: #dc3545; }
-        button.danger:hover { background-color: #c82333; }
-        #canvas-container {
-            width: 100%;
-            max-width: 1000px;
-            overflow-x: auto;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        canvas {
-            display: block;
-        }
+        :root { --primary: #007bff; --bg: #f8f9fa; --node-bg: #ffffff; --node-border: #343a40; }
+        body { font-family: sans-serif; background: var(--bg); display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .controls { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 20px; }
+        input, select { padding: 8px; border: 1px solid #ddd; border-radius: 6px; }
+        button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; background: var(--primary); color: white; transition: 0.2s; }
+        button:hover { opacity: 0.8; }
+        button.delete { background: #dc3545; }
+        button.reset { background: #6c757d; }
+        canvas { background: white; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); cursor: grab; }
+        .info { margin-top: 10px; color: #666; font-size: 14px; }
     </style>
 </head>
 <body>
 
-    <div class="control-panel">
-        <label><b>M = 4阶 B树</b></label>
-        <input type="number" id="keyInput" placeholder="输入数字..." onkeypress="handleEnter(event)">
-        <button onclick="insertKey()">插入</button>
-        <button class="danger" onclick="resetTree()">重置</button>
+    <div class="controls">
+        <label>阶数 (M):</label>
+        <select id="mSelect" onchange="initTree()">
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+        </select>
+        <input type="number" id="keyInput" placeholder="输入 Key..." style="width: 80px">
+        <button onclick="doInsert()">插入</button>
+        <button class="delete" onclick="doDelete()">删除</button>
+        <button class="reset" onclick="initTree()">清空重置</button>
     </div>
 
-    <div id="canvas-container">
-        <canvas id="treeCanvas" width="1000" height="500"></canvas>
-    </div>
+    <canvas id="treeCanvas"></canvas>
+    <div class="info">提示：M 阶 B 树，每个节点最多 M-1 个 Key，最少 ⌈M/2⌉-1 个 Key。</div>
 
-    <script>
-        // B 树引擎逻辑 (Overflow 策略实现)
-        class BTree {
-            constructor(order) {
-                this.order = order; 
-                this.root = { keys: [], children: [], isLeaf: true };
-            }
+<script>
+// --- B 树核心逻辑引擎 ---
+class BNode {
+    constructor(isLeaf) {
+        this.keys = [];
+        this.children = [];
+        this.isLeaf = isLeaf;
+    }
+}
 
-            insert(key) {
-                // 防止重复插入
-                if(this.contains(this.root, key)) {
-                    alert("键值 " + key + " 已存在！");
-                    return;
-                }
-                this._insert(this.root, key);
-                // 如果根节点溢出，分裂产生新根
-                if (this.root.keys.length >= this.order) {
-                    let newRoot = { keys: [], children: [this.root], isLeaf: false };
-                    this._split(newRoot, 0, this.root);
-                    this.root = newRoot;
-                }
-            }
+class BTree {
+    constructor(m) {
+        this.m = m; // Order
+        this.minKeys = Math.ceil(m / 2) - 1;
+        this.root = new BNode(true);
+    }
 
-            contains(node, key) {
-                let i = 0;
-                while (i < node.keys.length && key > node.keys[i]) i++;
-                if (i < node.keys.length && key === node.keys[i]) return true;
-                if (node.isLeaf) return false;
-                return this.contains(node.children[i], key);
-            }
-
-            _insert(node, key) {
-                if (node.isLeaf) {
-                    node.keys.push(key);
-                    node.keys.sort((a, b) => a - b);
-                } else {
-                    let i = 0;
-                    while (i < node.keys.length && key > node.keys[i]) i++;
-                    this._insert(node.children[i], key);
-                    // 递归回溯时，如果子节点溢出则分裂
-                    if (node.children[i].keys.length >= this.order) {
-                        this._split(node, i, node.children[i]);
-                    }
-                }
-            }
-
-            _split(parent, index, child) {
-                let mid = Math.floor(child.keys.length / 2);
-                let midKey = child.keys[mid];
-                
-                let rightChild = {
-                    keys: child.keys.slice(mid + 1),
-                    children: child.isLeaf ? [] : child.children.slice(mid + 1),
-                    isLeaf: child.isLeaf
-                };
-                
-                child.keys = child.keys.slice(0, mid);
-                if (!child.isLeaf) {
-                    child.children = child.children.slice(0, mid + 1);
-                }
-                
-                parent.keys.splice(index, 0, midKey);
-                parent.children.splice(index + 1, 0, rightChild);
-            }
+    insert(key) {
+        if (this.root.keys.includes(key)) return;
+        let r = this.root;
+        if (r.keys.length === this.m - 1) {
+            let s = new BNode(false);
+            this.root = s;
+            s.children.push(r);
+            this.split(s, 0);
+            this._insertNonFull(s, key);
+        } else {
+            this._insertNonFull(r, key);
         }
+    }
 
-        // Canvas 渲染引擎
-        const canvas = document.getElementById('treeCanvas');
-        const ctx = canvas.getContext('2d');
-        let btree = new BTree(4);
+    split(parent, i) {
+        let y = parent.children[i];
+        let z = new BNode(y.isLeaf);
+        let mid = Math.floor((this.m - 1) / 2);
+        let midKey = y.keys[mid];
 
-        const NODE_HEIGHT = 30;
-        const KEY_WIDTH = 40;
-        const LEVEL_HEIGHT = 80;
+        z.keys = y.keys.splice(mid + 1);
+        if (!y.isLeaf) z.children = y.children.splice(mid + 1);
+        
+        parent.keys.splice(i, 0, midKey);
+        parent.children.splice(i + 1, 0, z);
+        y.keys.pop(); // Remove the promoted key
+    }
 
-        function drawTree() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            // 1. 先计算所有节点的位置和所需宽度
-            calculatePositions(btree.root, 1, 0);
-            
-            // 如果树太宽，自动扩展 Canvas
-            let requiredWidth = btree.root.width + 100;
-            if (requiredWidth > canvas.width) {
-                canvas.width = requiredWidth;
-                calculatePositions(btree.root, 1, 0); 
+    _insertNonFull(x, k) {
+        let i = x.keys.length - 1;
+        if (x.isLeaf) {
+            x.keys.push(k);
+            x.keys.sort((a, b) => a - b);
+        } else {
+            while (i >= 0 && k < x.keys[i]) i--;
+            i++;
+            if (x.children[i].keys.length === this.m - 1) {
+                this.split(x, i);
+                if (k > x.keys[i]) i++;
             }
-            
-            // 将根节点居中
-            let offset = (canvas.width - btree.root.width) / 2 - btree.root.x + btree.root.width/2;
-            shiftPositions(btree.root, offset);
-
-            // 2. 渲染线条和节点
-            renderNode(btree.root);
+            this._insertNonFull(x.children[i], k);
         }
+    }
 
-        function calculatePositions(node, depth, xOffset) {
-            let padding = 20;
-            if (node.isLeaf) {
-                node.width = node.keys.length * KEY_WIDTH;
-                node.x = xOffset + node.width / 2 + padding;
-                node.y = depth * LEVEL_HEIGHT;
-                return node.width + padding * 2;
-            } else {
-                let totalWidth = 0;
-                for (let child of node.children) {
-                    totalWidth += calculatePositions(child, depth + 1, xOffset + totalWidth);
-                }
-                node.width = node.keys.length * KEY_WIDTH;
-                // 父节点处于第一个和最后一个子节点的中间
-                let firstChild = node.children[0];
-                let lastChild = node.children[node.children.length - 1];
-                node.x = (firstChild.x + lastChild.x) / 2;
-                node.y = depth * LEVEL_HEIGHT;
-                return Math.max(totalWidth, node.width + padding * 2);
-            }
+    delete(k) { this._delete(this.root, k); if (this.root.keys.length === 0 && !this.root.isLeaf) this.root = this.root.children[0]; }
+
+    _delete(x, k) {
+        let i = 0;
+        while (i < x.keys.length && k > x.keys[i]) i++;
+
+        if (i < x.keys.length && x.keys[i] === k) {
+            if (x.isLeaf) x.keys.splice(i, 1);
+            else this._deleteInternal(x, i);
+        } else if (!x.isLeaf) {
+            let child = x.children[i];
+            if (child.keys.length === this.minKeys) this._fill(x, i);
+            this._delete(x.children[i === x.keys.length + 1 && i > x.keys.length ? i-1 : i], k);
         }
+    }
 
-        function shiftPositions(node, offset) {
-            node.x += offset;
-            for (let child of node.children) {
-                shiftPositions(child, offset);
-            }
+    _deleteInternal(x, i) {
+        let k = x.keys[i], left = x.children[i], right = x.children[i+1];
+        if (left.keys.length > this.minKeys) {
+            let pred = this._getPred(left);
+            x.keys[i] = pred;
+            this._delete(left, pred);
+        } else if (right.keys.length > this.minKeys) {
+            let succ = this._getSucc(right);
+            x.keys[i] = succ;
+            this._delete(right, succ);
+        } else {
+            this._merge(x, i);
+            this._delete(left, k);
         }
+    }
 
-        function renderNode(node) {
-            // 画连接线
-            if (!node.isLeaf) {
-                ctx.strokeStyle = '#6c757d';
-                ctx.lineWidth = 2;
-                for (let child of node.children) {
-                    ctx.beginPath();
-                    ctx.moveTo(node.x, node.y + NODE_HEIGHT / 2);
-                    ctx.lineTo(child.x, child.y - NODE_HEIGHT / 2);
-                    ctx.stroke();
-                    renderNode(child);
-                }
-            }
+    _getPred(x) { while (!x.isLeaf) x = x.children[x.keys.length]; return x.keys[x.keys.length - 1]; }
+    _getSucc(x) { while (!x.isLeaf) x = x.children[0]; return x.keys[0]; }
 
-            // 画节点框
-            let startX = node.x - node.width / 2;
-            let startY = node.y - NODE_HEIGHT / 2;
+    _fill(x, i) {
+        if (i !== 0 && x.children[i-1].keys.length > this.minKeys) this._borrowPrev(x, i);
+        else if (i !== x.keys.length && x.children[i+1].keys.length > this.minKeys) this._borrowNext(x, i);
+        else i !== x.keys.length ? this._merge(x, i) : this._merge(x, i-1);
+    }
 
-            // 节点背景
-            ctx.fillStyle = node.isLeaf ? '#e9ecef' : '#cce5ff';
-            ctx.fillRect(startX, startY, node.width, NODE_HEIGHT);
-            
-            // 节点边框
-            ctx.strokeStyle = '#004085';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(startX, startY, node.width, NODE_HEIGHT);
+    _borrowPrev(x, i) {
+        let child = x.children[i], sibling = x.children[i-1];
+        child.keys.unshift(x.keys[i-1]);
+        if (!child.isLeaf) child.children.unshift(sibling.children.pop());
+        x.keys[i-1] = sibling.keys.pop();
+    }
 
-            // 画里面的 Key 和分割线
-            ctx.fillStyle = '#212529';
-            ctx.font = '16px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+    _borrowNext(x, i) {
+        let child = x.children[i], sibling = x.children[i+1];
+        child.keys.push(x.keys[i]);
+        if (!child.isLeaf) child.children.push(sibling.children.shift());
+        x.keys[i] = sibling.keys.shift();
+    }
 
-            for (let i = 0; i < node.keys.length; i++) {
-                let keyX = startX + i * KEY_WIDTH + KEY_WIDTH / 2;
-                ctx.fillText(node.keys[i], keyX, node.y);
+    _merge(x, i) {
+        let child = x.children[i], sibling = x.children[i+1];
+        child.keys.push(x.keys[i]);
+        child.keys.push(...sibling.keys);
+        if (!child.isLeaf) child.children.push(...sibling.children);
+        x.keys.splice(i, 1);
+        x.children.splice(i + 1, 1);
+    }
+}
 
-                // 竖向分割线
-                if (i < node.keys.length - 1) {
-                    ctx.beginPath();
-                    ctx.moveTo(startX + (i + 1) * KEY_WIDTH, startY);
-                    ctx.lineTo(startX + (i + 1) * KEY_WIDTH, startY + NODE_HEIGHT);
-                    ctx.stroke();
-                }
-            }
-        }
+// --- 绘图引擎 ---
+const canvas = document.getElementById('treeCanvas');
+const ctx = canvas.getContext('2d');
+let tree;
 
-        // 交互逻辑
-        function insertKey() {
-            const input = document.getElementById('keyInput');
-            const val = parseInt(input.value);
-            if (!isNaN(val)) {
-                btree.insert(val);
-                drawTree();
-                input.value = '';
-            }
-            input.focus();
-        }
+function initTree() {
+    const m = parseInt(document.getElementById('mSelect').value);
+    tree = new BTree(m);
+    [10, 20, 30, 40, 50].forEach(k => tree.insert(k));
+    render();
+}
 
-        function handleEnter(e) {
-            if (e.key === 'Enter') insertKey();
-        }
+function doInsert() {
+    const val = parseInt(document.getElementById('keyInput').value);
+    if (!isNaN(val)) tree.insert(val);
+    render();
+}
 
-        function resetTree() {
-            btree = new BTree(4);
-            // 初始插入几个数据方便观看
-            [10, 20, 30, 40, 50, 60].forEach(k => btree.insert(k));
-            drawTree();
-        }
+function doDelete() {
+    const val = parseInt(document.getElementById('keyInput').value);
+    if (!isNaN(val)) tree.delete(val);
+    render();
+}
 
-        // 初始化
-        resetTree();
-    </script>
+function render() {
+    canvas.width = window.innerWidth * 0.9;
+    canvas.height = 600;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const layout = calculateLayout(tree.root, 0, 0, canvas.width);
+    drawNode(tree.root, canvas.width / 2, 50, canvas.width / 2);
+}
+
+function drawNode(node, x, y, width) {
+    const nodeW = node.keys.length * 30 + 10;
+    const nodeH = 30;
+
+    if (!node.isLeaf) {
+        const childCount = node.children.length;
+        const step = width / childCount;
+        node.children.forEach((child, i) => {
+            const childX = x - width / 2 + step * i + step / 2;
+            const childY = y + 80;
+            ctx.beginPath();
+            ctx.moveTo(x, y + nodeH / 2);
+            ctx.lineTo(childX, childY - nodeH / 2);
+            ctx.strokeStyle = '#aaa';
+            ctx.stroke();
+            drawNode(child, childX, childY, step);
+        });
+    }
+
+    ctx.fillStyle = "white";
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x - nodeW / 2, y - nodeH / 2, nodeW, nodeH);
+    ctx.fillRect(x - nodeW / 2, y - nodeH / 2, nodeW, nodeH);
+
+    ctx.fillStyle = "black";
+    ctx.font = "14px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    node.keys.forEach((k, i) => {
+        ctx.fillText(k, x - nodeW / 2 + 20 + i * 30, y);
+    });
+}
+
+function calculateLayout(node, depth, x, width) { return width; } // 简化版自动布局
+
+initTree();
+</script>
 </body>
 </html>
